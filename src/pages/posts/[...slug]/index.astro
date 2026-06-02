@@ -8,6 +8,7 @@ import Tag from "@/components/Tag.astro";
 import { getPostSlug, getPostUrl } from "@/utils/getPostPaths";
 import { getSortedPosts } from "@/utils/getSortedPosts";
 import { slugifyStr } from "@/utils/slugify";
+import { toTransitionName } from "@/utils/toTransitionName";
 import EditPost from "./_components/EditPost.astro";
 import ShareLinks from "./_components/ShareLinks.astro";
 import BackButton from "./_components/BackButton.astro";
@@ -111,7 +112,7 @@ const ogImage = ogImageUrl
     data-pagefind-body
   >
     <h1
-      style={{ viewTransitionName: slugifyStr(title.replaceAll(".", "-")) }}
+      style={{ viewTransitionName: toTransitionName(title) }}
       class="text-accent inline-block text-2xl font-bold sm:text-3xl"
     >
       {title}
