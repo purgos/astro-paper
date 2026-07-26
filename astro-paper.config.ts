@@ -3,7 +3,7 @@ import { defineAstroPaperConfig } from "./src/types/config";
 export default defineAstroPaperConfig({
   site: {
     url: "https://blog.purgos.net/",
-    title: "Purgos Blog",
+    title: "Purgos's Lab",
     description: "Homelab builds, self-hosted services, and project writeups.",
     author: "Zachariah Moore",
     profile: "https://github.com/purgos",
