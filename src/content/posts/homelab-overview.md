@@ -27,10 +27,9 @@ Everything runs on a single physical box: a Proxmox VE host doing the actual vir
 next to the router, switch, a NAS enclosure, and a printer that has nothing to do with any of this but lives on
 the same shelf anyway.
 
-<figure>
-  <img src="../../assets/images/homelab-rack.jpg" alt="Homelab shelf with router, switch, NAS enclosure, and the Proxmox host tower underneath" />
-  <figcaption class="text-center">The actual rack — router and switch on top, Proxmox host on the bottom.</figcaption>
-</figure>
+![Homelab shelf with router, switch, NAS enclosure, and the Proxmox host tower underneath](../../assets/images/homelab-rack.jpg)
+
+*The actual rack — router and switch on top, Proxmox host on the bottom.*
 
 Nothing fancy, no rackmount gear, no IPMI — just consumer hardware doing real work.
 
