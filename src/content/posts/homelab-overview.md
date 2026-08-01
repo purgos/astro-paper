@@ -43,7 +43,6 @@ dozen VMs currently, covering:
 - **Infrastructure** — reverse proxies and the dashboard that ties everything together
 - **DNS** — two VMs, each running Pi-hole, for redundancy
 - **Media** — Plex (with GPU passthrough for transcoding), Ombi, Kavita, Audiobookshelf
-- **Arr stack** — Sonarr, Radarr, Prowlarr, Lidarr, Readarr, Bazarr, and friends
 - **Matrix** — a self-hosted Synapse homeserver + Element client for chat
 - **Community services** — a wiki, a forum, a Minecraft server, all serving a small community I run alongside
   my own personal services
@@ -63,9 +62,9 @@ without hand-issuing a cert per service.
 DNS-level ad-blocking runs through two independent Pi-hole instances rather than one, so a single Pi-hole
 outage doesn't take down name resolution for the whole network.
 
-Everything that doesn't need to be public-facing — admin tools, the Arr stack, anything with a history of
-being targeted when exposed directly to the internet — stays reachable only over a private VPN mesh rather
-than getting a public DNS entry at all. Only things that genuinely need to be reachable by anonymous visitors
+Everything that doesn't need to be public-facing — admin tools, anything with a history of being targeted
+when exposed directly to the internet — stays reachable only over a private VPN mesh rather than getting a
+public DNS entry at all. Only things that genuinely need to be reachable by anonymous visitors
 or embedded/locked-down client devices (smart TVs, game consoles) get exposed publicly.
 
 ## Keeping track of it all
