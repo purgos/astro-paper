@@ -33,6 +33,10 @@ plugs into the same machine it's protecting, and that machine locks up or crashe
 the one thing you actually needed — a clean shutdown signal before the battery dies — goes down with it. A
 separate always-on, dead-simple device sidesteps that entirely.
 
+It's also part of a broader pattern: small appliance-like jobs like this one are moving off the main Proxmox
+box and onto their own dedicated Pis over time, so the homelab can keep growing without piling more and more
+unrelated responsibilities onto a single machine.
+
 That Pi hasn't arrived yet. Rather than leave the UPS unmonitored in the meantime, I set it up as a temporary
 standalone install directly on the Proxmox host — worse than the eventual setup, but much better than
 nothing. When the Pi shows up, the USB cable moves over to it and the host switches from running its own NUT
