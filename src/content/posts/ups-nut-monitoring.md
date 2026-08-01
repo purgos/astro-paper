@@ -33,9 +33,10 @@ plugs into the same machine it's protecting, and that machine locks up or crashe
 the one thing you actually needed — a clean shutdown signal before the battery dies — goes down with it. A
 separate always-on, dead-simple device sidesteps that entirely.
 
-Picking a dedicated Pi for this rather than settling for local monitoring long-term is also just good
-groundwork for a homelab that keeps growing — small, purpose-built devices are easy to add one at a time as
-things expand, instead of continuing to pile more onto the one box every time something new needs a home.
+Picking a dedicated Pi for this rather than settling for local monitoring long-term is also groundwork for a
+homelab that keeps growing: small appliance-like jobs — DNS, a timeserver, and now UPS monitoring — are
+better off as their own small, purpose-built devices than piled onto the one box every time something new
+needs a home.
 
 That Pi hasn't arrived yet. Rather than leave the UPS unmonitored in the meantime, I set it up as a temporary
 standalone install directly on the Proxmox host — worse than the eventual setup, but much better than
