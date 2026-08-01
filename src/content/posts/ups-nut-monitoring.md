@@ -14,10 +14,10 @@ ogImage: ../../assets/images/ups-nut-rack.jpg
 description: "Getting a rack UPS talking to Linux over USB with Network UPS Tools, and the udev permissions gotcha that came with it."
 ---
 
-A rack UPS finally landed on the shelf — a CyberPower 1500VA/1000W unit powering the Proxmox host plus the
-router and switch. A UPS that just sits there quietly running on battery when the power blips isn't that
-useful on its own; the interesting part is having the server actually *know* when it's on battery, and shut
-itself down cleanly before the battery runs out instead of just dying mid-write.
+A rack UPS landed on the shelf: a CyberPower 1500VA/1000W unit powering the Proxmox host, the router, and
+the switch. On its own, a UPS just runs on battery when the power blips. The useful part is having the
+server know when it's on battery, so it can shut down cleanly before the battery runs out instead of dying
+mid-write.
 
 ![CyberPower rack UPS mounted under a wire shelf holding a router and switch, front panel showing live output display](../../assets/images/ups-nut-rack.jpg)
 
@@ -27,21 +27,19 @@ itself down cleanly before the battery runs out instead of just dying mid-write.
 
 ## The plan vs. the holdover
 
-The long-term plan is to put UPS monitoring on its own tiny dedicated box — a Raspberry Pi that does nothing
-but run the NUT (Network UPS Tools) master and watch the UPS over USB. The reasoning: if the UPS's USB cable
-plugs into the same machine it's protecting, and that machine locks up or crashes for an unrelated reason,
-the one thing you actually needed — a clean shutdown signal before the battery dies — goes down with it. A
-separate always-on, dead-simple device sidesteps that entirely.
+The long-term plan is to run UPS monitoring on its own small dedicated box: a Raspberry Pi that does nothing
+but run the NUT (Network UPS Tools) master and watch the UPS over USB. If the UPS's USB cable plugs into the
+same machine it's protecting, a crash or hang on that machine takes the shutdown signal down with it, right
+when it's needed most. A separate, always-on device avoids that.
 
-Picking a dedicated Pi for this rather than settling for local monitoring long-term is also groundwork for a
-homelab that keeps growing: small appliance-like jobs — DNS, a timeserver, and now UPS monitoring — are
-better off as their own small, purpose-built devices than piled onto the one box every time something new
-needs a home.
+It also fits a longer-term plan for the homelab to keep growing. Small appliance-like jobs like DNS, a
+timeserver, and now UPS monitoring work better as their own small, purpose-built devices than piled onto one
+box every time something new needs a home.
 
-That Pi hasn't arrived yet. Rather than leave the UPS unmonitored in the meantime, I set it up as a temporary
-standalone install directly on the Proxmox host — worse than the eventual setup, but much better than
-nothing. When the Pi shows up, the USB cable moves over to it and the host switches from running its own NUT
-server to just being a network client of the Pi's.
+That Pi hasn't arrived yet. Rather than leave the UPS unmonitored, I set it up as a temporary standalone
+install directly on the Proxmox host. It's worse than the eventual setup, but far better than nothing. When
+the Pi arrives, the USB cable moves to it and the host switches from running its own NUT server to being a
+network client of the Pi's.
 
 ## Getting NUT talking to the UPS
 
@@ -50,35 +48,35 @@ NUT splits into three pieces that normally run together on one box in a standalo
 - A **driver** that speaks the UPS's actual protocol (USB HID, in this case) and translates it into NUT's
   internal format.
 - **`upsd`**, a small data server that holds the current UPS state and answers queries from clients.
-- **`upsmon`**, the monitor — polls `upsd`, and when battery charge or estimated runtime crosses a
-  configured threshold, runs a shutdown command.
+- **`upsmon`**, the monitor. It polls `upsd`, and when battery charge or estimated runtime crosses a
+  configured threshold, it runs a shutdown command.
 
 Installing the Linux distro's `nut` package and running its bundled scanner tool against the USB bus was
-enough to auto-detect the UPS's vendor/product ID and confirm the exact model — handy, since the generic
-descriptor string reported by a plain `lsusb` didn't actually match the model printed on the unit's own front
-panel (turned out to just be a shared USB ID CyberPower reuses across several models in the same product
-line, not a wrong label).
+enough to auto-detect the UPS's vendor and product ID and confirm the exact model. That was useful, because
+the generic descriptor string reported by a plain `lsusb` didn't match the model printed on the unit's front
+panel. It turned out to be a USB ID CyberPower reuses across several models in the same product line, not a
+wrong label.
 
 From there it's three small config files: which USB device to drive, which local address `upsd` should
 listen on, and a `upsmon` account with a password to authenticate against it. Enable the driver, `upsd`, and
-`upsmon` as services, and `upsc <upsname>` should start returning live numbers — battery percentage,
-estimated runtime, current load, input/output voltage.
+`upsmon` as services. `upsc <upsname>` then returns live numbers: battery percentage, estimated runtime,
+current load, input and output voltage.
 
 ## The gotcha: udev rules don't apply retroactively
 
-The driver refused to start at first, failing with a permissions error trying to open the USB device — odd,
-since the package ships a udev rule that's supposed to hand that exact device over to the right group
-automatically. Turned out the UPS had been plugged in *before* the NUT package (and its udev rule) was
-installed, and udev only fires rules on a device event — plugging in, unplugging, or an explicit re-trigger —
-not retroactively against a device that's already sitting there enumerated with old permissions.
+The driver refused to start at first, failing with a permissions error trying to open the USB device. That
+was odd, since the package ships a udev rule that's supposed to hand that exact device over to the right
+group automatically. It turned out the UPS had been plugged in before the NUT package, and its udev rule,
+were installed. udev only fires rules on a device event: plugging in, unplugging, or an explicit re-trigger.
+It doesn't apply retroactively to a device that's already sitting there with old permissions.
 
-The fix was a single command to manually re-fire udev against the already-connected device, rather than
-needing a physical unplug/replug or a reboot. Worth knowing as a general udev fact, not just a NUT one: any
-time a freshly installed package's udev rule doesn't seem to be taking effect on hardware that was already
-plugged in when you installed it, that's the first thing to check.
+The fix was a single command to manually re-fire udev against the already-connected device, no physical
+unplug or reboot needed. This is a general udev fact, not just a NUT one. If a freshly installed package's
+udev rule doesn't seem to be taking effect on hardware that was already plugged in, that's the first thing
+to check.
 
 ## What's next
 
-Once the dedicated Pi arrives, this setup graduates from "workable holdover" to "actually resilient" —
-monitoring that survives a host crash instead of going down with it. Until then, the host protects itself,
-which is still a meaningful upgrade from a UPS that just sits there being trusted to work.
+Once the dedicated Pi arrives, monitoring will survive a host crash instead of going down with it. Until
+then, the host protects itself, which is still a real improvement over a UPS that just sits there being
+trusted to work.
