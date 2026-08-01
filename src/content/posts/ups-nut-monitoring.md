@@ -21,7 +21,7 @@ itself down cleanly before the battery runs out instead of just dying mid-write.
 
 ![CyberPower rack UPS mounted under a wire shelf holding a router and switch, front panel showing live output display](../../assets/images/ups-nut-rack.jpg)
 
-*My Ups*
+*My UPS*
 
 ## Table of contents
 
