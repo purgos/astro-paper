@@ -1,7 +1,7 @@
 ---
 author: Purgos
 pubDatetime: 2026-08-02T00:00:00.000Z
-title: Building a Public Edge Server for My Homelab, Part 1: The Web Side
+title: "Building a Public Edge Server for My Homelab, Part 1: The Web Side"
 slug: front-end-vps-part-1
 featured: false
 draft: false
