@@ -38,10 +38,6 @@ port forwards at all, not just for Minecraft and web.
 
 ## Problems hit, and how they got fixed
 
-- **Wrong Docker image assumed at first** (`itzg/docker-velocity-proxy`, which doesn't exist) — the real image
-  is `itzg/mc-proxy`, selecting Velocity via an env var. Different mount layout too: config gets synced into a
-  separate runtime directory, which needs its own persistent volume or the proxy jar re-downloads every
-  restart.
 - **`velocity.toml` kept mounting as an empty directory instead of a file.** Classic Docker gotcha: a bind
   mount to a host path that doesn't exist yet gets silently created as a directory. Had to stop the container,
   remove the directory, put a real file in its place, then start fresh.
