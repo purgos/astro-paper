@@ -10,100 +10,78 @@ tags:
   - networking
   - tailscale
   - self-hosting
-description: "Moving Minecraft and public web traffic off my home connection and onto a small VPS, using Tailscale instead of a VPN tunnel or exposed ports."
+description: "Moving public web traffic off my home connection and onto a small VPS, using Tailscale ACLs instead of a VPN tunnel or exposed ports."
 ---
 
-I run a small homelab out of my house: a Minecraft server for friends, a Matrix homeserver, a wiki, a forum,
-a couple of self-hosted media apps. All of it used to sit directly behind my home router's port forwards.
-That's fine for most of it, but Minecraft servers get hit with griefer and booter DDoS traffic often enough
-that I didn't want my home connection to be the thing that goes down when someone decides to be annoying.
+Moved public web traffic (self-hosted wiki, forum, Matrix homeserver, a few other services) off my home
+connection and onto a small VPS, so my home IP is no longer directly exposed. Minecraft is a separate,
+still-pending migration covered in part 2.
 
-The fix is a pattern a lot of people use for exactly this: put a cheap VPS in front, and make it the only
-thing the internet ever touches. Everything else keeps running at home, reachable only through a private
-tunnel. I'm calling the VPS the **Front End**.
+## What was done
 
-This post covers the first half of that migration: moving the public web traffic over. Minecraft itself is
-still on the old path and will be part two.
+- Bought a small VPS (2 vCPU, 2 GB RAM, 90 GB SSD, static public IP) to act as the public-facing edge.
+  Calling it the **Front End**.
+- Installed [Tailscale](https://tailscale.com/) on the VPS and joined it to my existing tailnet, instead of
+  setting up a separate WireGuard tunnel.
+- Hardened SSH on the VPS: key-only auth, bound to the Tailscale interface only, not reachable on the public
+  interface at all.
+- Installed Tailscale directly on the two home services the Front End needs to reach (the Minecraft host and
+  the internal reverse-proxy host), rather than relying on my home network's existing Tailscale subnet
+  router. Each got its own tag.
+- Wrote a Tailscale ACL policy scoping the Front End down to only the specific ports on those two tagged
+  hosts that it actually needs — nothing else on the home network is reachable from it, by default.
+- Deployed [Nginx Proxy Manager](https://nginxproxymanager.com/) on the Front End as the new public
+  TLS-terminating edge.
+- Chained the Front End's NPM to the existing NPM instance at home: the Front End terminates public TLS and
+  forwards plain HTTP to the home instance over the Tailscale tunnel (already encrypted, so no need to
+  double-terminate TLS). The home instance keeps doing all its existing per-hostname routing unchanged.
+- Migrated public hostnames over to the Front End one at a time, verifying each before moving to the next.
+- Removed the home router's old port forward for web traffic once every hostname was confirmed working
+  through the new path.
 
-## Why not just a VPN tunnel to the router
+## Why Tailscale instead of a plain VPN tunnel
 
-The usual DIY version of this is a WireGuard tunnel from the VPS back to something at home. I used
-[Tailscale](https://tailscale.com/) instead, mostly because I already run it across the rest of my homelab
-for admin access, and because its ACL system gives me something a raw tunnel doesn't: per-service,
-per-port access control that's enforced centrally, not just "this box can reach that subnet."
+- Tailscale's ACL system enforces access centrally, per source/destination/port, rather than just "this box
+  can reach that subnet."
+- My home network already has a Tailscale subnet router advertising the whole LAN. Using it would have given
+  the Front End (the single most internet-exposed device on the network) a routable path to everything at
+  home, with only an ACL rule standing in the way of anything going wrong.
+- Giving each home service its own Tailscale identity and tag instead means a missing or wrong ACL rule just
+  fails closed, instead of silently granting broader access than intended.
 
-That distinction mattered once I started designing this. My home network already has a Tailscale subnet
-router advertising the whole LAN. The easy path would have been to turn on `--accept-routes` on the VPS and
-let it reach anything at home over that route. I didn't do that, because it means the single most
-internet-exposed device on my network would have a routable path to *everything* at home, with nothing but an
-ACL rule standing in the way if I ever wrote one too loosely.
+## How the two-NPM chain actually routes requests
 
-Instead, each home service that needs to talk to the Front End got its own Tailscale client and its own tag,
-and the ACL only grants narrow, specific paths:
+- Every proxy host entry on the Front End's NPM forwards to the *same* destination IP and port (the home
+  instance) — not a misconfiguration.
+- Which entry handles a given request is decided by SNI (HTTPS) or the `Host` header (HTTP, and the
+  decrypted contents of any HTTPS request), not by the destination.
+- NPM forwards the original `Host` header unchanged by default, so the home instance sees the real hostname
+  and routes it again itself, using config that never had to change.
 
-```json
-{
-  "action": "accept",
-  "src":    ["tag:vps-edge"],
-  "dst":    ["tag:crafty-backend:25565-25571"]
-}
-```
+## Problems hit, and how they got fixed
 
-That's the entire grant for reaching my Minecraft backend: those ports, nothing else. If I forget to add a
-rule for something new, it just doesn't work, instead of quietly having broader access than I intended.
-
-## Layering NPM behind NPM
-
-The web side works by chaining two instances of [Nginx Proxy Manager](https://nginxproxymanager.com/): one
-on the Front End, terminating public TLS, and the existing one at home that already knows how to route every
-hostname to its actual backend. The Front End's NPM just forwards to the home instance over Tailscale,
-plain HTTP, since the tunnel itself is already encrypted.
-
-The part that's easy to get wrong here is that the Front End's NPM has dozens of proxy host entries, all
-forwarding to the exact same destination IP and port. That's not a misconfiguration. Which entry actually
-handles a given request is decided by SNI (for HTTPS) or the `Host` header (for HTTP and for the decrypted
-contents of any HTTPS request), not by where the connection ends up. NPM forwards the original `Host` header
-unchanged by default, so the home instance sees the real hostname and can route it again on its own, using
-config that never had to change.
-
-The one real gotcha: if the home instance still has "Force SSL" turned on for a hostname reached this way,
-you get an infinite redirect. The edge terminates TLS and forwards plain HTTP; the home instance sees
-plaintext and redirects back to HTTPS; that request goes out to the internet and comes right back to the
-edge; repeat forever. NPM's redirect doesn't check `X-Forwarded-Proto`, so it has no way to know the request
-already arrived over HTTPS one hop earlier. Turning off Force SSL on the home side for anything now reached
-through the edge fixes it.
-
-## The debugging session that taught me to distrust my own test results
-
-Once the Front End was up, I migrated hostnames one at a time and tested each one from home. Most worked
-immediately. Three didn't: my Matrix homeserver, its web client, and my Minecraft server manager's admin
-panel. Everything else looked fine, which made it seem like something specific to those three services.
-
-It wasn't. It was my test method.
-
-My home DNS resolver has local override records for one of my two domains, but not the other. Testing a
-hostname on the domain *with* local overrides resolves straight to the home-side proxy directly, without
-ever leaving the LAN, which means it was never actually exercising the new Front End path at all. It was
-just working the old way it always had. The domain *without* local overrides had no such shortcut, so testing
-it from home correctly went out to the internet, hit the Front End, and came back through the real chain.
-Those were the only three that were actually being tested end to end, and they surfaced three unrelated real
-bugs:
-
-1. My Minecraft manager's admin panel only serves its web UI over HTTPS. The home-side proxy's forward
-   scheme was set to plain HTTP, so it couldn't complete the connection to the backend at all.
-2. Matrix's DNS record kept quietly reverting to my home IP. A `ddclient` cron job that's existed for years
-   to track my router's changing IP was still running, and it would silently overwrite my manual fix on its
-   next scheduled run. It hadn't caused a problem before because nothing else depended on that record staying
-   put.
-3. Matrix threw a certificate error against the wildcard cert that every other hostname on that domain uses
-   without issue. Issuing it an individual certificate instead of sharing the wildcard fixed it. I never
-   fully root-caused why the wildcard specifically failed here and not elsewhere.
-
-None of these would have been findable without first figuring out that my own "everything else works" signal
-was partly an artifact of how my LAN resolves DNS, not a real test of the new setup.
+- **Redirect loop when chaining the two NPM instances.** If the home instance still had "Force SSL" turned
+  on for a hostname now reached through the Front End, it would redirect the Front End's forwarded plain-HTTP
+  request back to HTTPS — which goes back out to the internet and right back to the Front End, looping
+  forever, since NPM's redirect doesn't check `X-Forwarded-Proto`. Fixed by turning off Force SSL on the home
+  instance for any hostname reached this way.
+- **Three hostnames failed after migration while everything else looked fine.** Turned out to be a false
+  signal, not three actual problems at first: one of my two domains has local DNS override records at home,
+  so testing those hostnames from home bypassed the new setup entirely and just hit the old path directly.
+  The other domain has no such override, so testing *those* hostnames was the only thing actually exercising
+  the new chain end to end — and it surfaced three real, unrelated bugs:
+  - Minecraft server manager's admin panel returned a 502. Its backend only serves HTTPS, but the home-side
+    proxy's forward scheme was set to HTTP. Fixed by switching it to HTTPS.
+  - Matrix homeserver's hostname refused connections. A `ddclient` cron job that's tracked my home router's
+    changing IP for years was still running and silently reverting the DNS record back to my home IP on its
+    normal schedule, even after manually correcting it. Fixed by disabling `ddclient` for that record
+    specifically (left it running for Minecraft's hostname, since that hasn't migrated yet).
+  - Matrix also threw a certificate error against the shared wildcard cert that every other hostname on that
+    domain uses without issue. Fixed by issuing it its own individual certificate instead. Didn't fully
+    root-cause why the wildcard specifically failed there and not elsewhere.
 
 ## Where it stands
 
-The web side is done: every public hostname now routes through the Front End, the old router port forward
-for web traffic is gone, and my home IP is no longer directly reachable for anything except Minecraft, which
-hasn't moved yet. That's part two.
+Web traffic migration is done: every public hostname routes through the Front End, the old router forward
+for web traffic is removed, and my home IP is no longer directly exposed for anything except Minecraft.
+Minecraft's migration is part two.
