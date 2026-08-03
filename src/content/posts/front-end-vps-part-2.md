@@ -71,12 +71,34 @@ port forwards at all, not just for Minecraft and web.
   directly instead. Confirmed it was actually gone (not just reconfigured) by disabling UPnP at the router
   entirely and testing a direct connection: clean refusal, not just a timeout.
 
+## Bedrock support, fixed
+
+Originally shipped this post with Bedrock (Geyser) support broken — the proxy's pinned version was missing a
+method a text-formatting library needed, throwing an error on every startup. Left it as a known open item
+since it didn't affect normal Java clients.
+
+Came back to actually fix it:
+
+- Bumped the proxy to the next stable point release first, on the theory that it would carry a newer copy of
+  the library Geyser needed. Didn't fix it — same error, unchanged.
+- Checked whether it was actually a plugin conflict rather than the proxy's own library version — inspected
+  Geyser's and Floodgate's plugin files directly for a bundled copy of the same library that might be
+  shadowing the proxy's version. Neither bundles one; the proxy's own copy really was the only one in play,
+  confirming it wasn't a conflict, just an outdated version.
+- Jumped to the next major version of the proxy instead. That one actually carries a new enough copy of the
+  library, and Geyser started up cleanly with no error at all.
+- A major version bump isn't guaranteed to keep plugin compatibility, so checked the other plugins
+  (permissions, protocol translation) landed fine too before calling it done. They did.
+- Found a second, separate gap while testing: the Bedrock-specific port was never actually published from the
+  container at all, only the Java one. Bedrock uses its own port on a different protocol (UDP, not TCP), so it
+  needed its own explicit publish plus its own firewall rule, distinct from Java's. Added both, then confirmed
+  the port responds to a real Bedrock protocol handshake, not just a generic open-port check.
+
 ## Where it stands
 
-Minecraft, web, and Plex all route through the Front End over Tailscale now. The home router has zero WAN→LAN
-port forwards, and UPnP is off, so nothing can silently open one back up. The tradeoff that doesn't go away:
-remote Plex streams now ride the VPS's smaller pipe instead of home's own uplink — an acceptable trade for
-actually hitting zero exposed ports, but worth knowing if remote streaming quality ever regresses.
-
-One open item, unrelated to any of the above: Bedrock (Geyser) support on the Minecraft proxy is currently
-broken against the pinned proxy version. Doesn't affect normal Java clients.
+Minecraft (Java and Bedrock now), web, and Plex all route through the Front End over Tailscale. The home router
+has zero WAN→LAN port forwards, and UPnP is off, so nothing can silently open one back up. The tradeoff that
+doesn't go away: remote Plex streams now ride the VPS's smaller pipe instead of home's own uplink — an
+acceptable trade for actually hitting zero exposed ports, but worth knowing if remote streaming quality ever
+regresses. Bedrock fix is confirmed reachable at the protocol level; still needs a real device to confirm an
+actual client can join end to end.
