@@ -24,7 +24,33 @@ of the night moving nearly every other database-backed service in the homelab on
 
 - Diagnosed the original bug by reading the actual plugin logs and config over SSH instead of guessing at it.
 - Built a dedicated VM running MariaDB in Docker, with its own least-privilege database and user per consuming
-  service rather than one shared login.
+  service rather than one shared login:
+
+  ```yaml
+  services:
+    mariadb:
+      image: mariadb:12.3
+      container_name: mariadb
+      restart: unless-stopped
+      env_file: .env
+      command: --max-connections=400
+      ports:
+        - "3306:3306"
+      volumes:
+        - ./data:/var/lib/mysql
+      healthcheck:
+        test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+        interval: 10s
+        timeout: 5s
+        retries: 6
+  ```
+
+  ```sql
+  CREATE DATABASE discordsrv;
+  CREATE USER 'discordsrv'@'%' IDENTIFIED BY '<generated-password>';
+  GRANT ALL PRIVILEGES ON discordsrv.* TO 'discordsrv'@'%';
+  FLUSH PRIVILEGES;
+  ```
 - Repointed the Discord-linking plugin on all seven servers at the shared database. The plugin migrated
   existing link data over automatically on first boot, no manual export/import needed.
 - Migrated permissions (LuckPerms) across all seven servers into the same shared database, merging seven
@@ -35,7 +61,26 @@ of the night moving nearly every other database-backed service in the homelab on
   MariaDB instance, so it could hold config files with live credentials without handing them to a third-party
   host.
 - Added a second shared engine, Postgres, on the same VM, and moved a wiki and a chat homeserver's databases
-  onto it from their own dedicated containers.
+  onto it from their own dedicated containers:
+
+  ```yaml
+  services:
+    postgres:
+      image: ghcr.io/immich-app/postgres:16-vectorchord1.1.1
+      container_name: postgres
+      restart: unless-stopped
+      env_file: .env
+      command: -c max_connections=300
+      ports:
+        - "5432:5432"
+      volumes:
+        - ./data:/var/lib/postgresql/data
+      healthcheck:
+        test: ["CMD-SHELL", "pg_isready -U postgres"]
+        interval: 10s
+        timeout: 5s
+        retries: 6
+  ```
 - Moved two more services' databases onto the shared MariaDB from their own dedicated containers/bare-metal
   installs.
 - Moved a photo-hosting service's database onto shared Postgres, which needed a vector-search extension the
@@ -55,7 +100,11 @@ lose), each server had real permission data that had built up independently over
 anything, the actual first step was figuring out how different the seven setups actually were:
 
 - Enabled remote console access on all seven servers (it was off everywhere) and used it to export each
-  server's live permission data to a portable file instead of touching the database files directly.
+  server's live permission data to a portable file instead of touching the database files directly:
+
+  ```
+  /lp export luckperms-export.json
+  ```
 - Diffing the actual permission sets (not just counts) across all seven showed a real pattern: the core rank
   structure (admin/mod/builder) was nearly identical on most of them, with two servers layering on their own
   extra permissions for plugins only they run. But the baseline "everyone gets this" tier was genuinely
@@ -113,9 +162,15 @@ the least-privilege pattern every other migration used).
   running version explicitly and recreating again.
 - **The media-request app's connection pool combined with the Minecraft permissions system's own steady-state
   connections pushed the shared MariaDB instance past a connection limit that had never actually been tuned
-  from its default.** The app went down shortly after cutover with a "too many connections" error. Fixed both
-  ends: raised the shared instance's connection ceiling, and capped the app's own pool so it can't do this
-  again on its own.
+  from its default.** The app went down shortly after cutover with a "too many connections" error. Checked who
+  was actually holding connections before tuning anything blind:
+
+  ```sql
+  SELECT user, COUNT(*) FROM information_schema.processlist GROUP BY user;
+  ```
+
+  Fixed both ends: raised the shared instance's connection ceiling (`--max-connections=400` in the compose
+  file above), and capped the app's own pool so it can't do this again on its own.
 - **A no-first-party-migration-path service's community migration tool turned out to be data-only, not
   schema-creating**, so pointing it at fresh empty databases failed immediately looking for tables that didn't
   exist yet. Fixed by starting the app once against the empty databases so its own migrations built the real
@@ -139,6 +194,20 @@ That same shared-database pattern ended up covering most of the rest of the home
 self-hosted git, a wiki, a chat homeserver, a federated social app, a forum, photo hosting, a media-request
 app, and several media-management apps are all off their own dedicated databases and onto one of two shared
 instances, each verified against real row counts and live traffic before its old database was retired. Daily
-backups now cover both shared instances. Open items: backups are local to the same VM as the databases
-themselves, so a real loss of that VM's disk would take the backups with it — an off-VM copy is the next thing
-on the list.
+backups now cover both shared instances, via cron:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+DATE=$(date +%F)
+
+docker exec mariadb mariadb-dump --all-databases --single-transaction \
+  | gzip > ~/backups/mariadb/mariadb-$DATE.sql.gz
+docker exec postgres pg_dumpall -U postgres \
+  | gzip > ~/backups/postgres/postgres-$DATE.sql.gz
+
+find ~/backups -name '*.sql.gz' -mtime +14 -delete
+```
+
+Open items: backups are local to the same VM as the databases themselves, so a real loss of that VM's disk
+would take the backups with it — an off-VM copy is the next thing on the list.

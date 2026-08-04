@@ -40,6 +40,71 @@ over USB and trigger a clean shutdown before the battery runs out.
 - Set up as a **temporary standalone install directly on the Proxmox host** — a holdover until a dedicated
   Raspberry Pi arrives.
 
+## The config, sanitized
+
+`nut-scanner -U` output (abbreviated) confirmed the exact vendor/product ID pair before trusting anything else:
+
+```
+[nutdev1]
+	driver = "usbhid-ups"
+	port = "auto"
+	vendorid = "0764"
+	productid = "0601"
+	vendor = "CPS"
+```
+
+Four small files under `/etc/nut/`, comments trimmed:
+
+```
+# nut.conf
+MODE=standalone
+```
+
+```
+# ups.conf
+maxretry = 3
+
+[rack-ups]
+	driver = usbhid-ups
+	port = auto
+	desc = "CyberPower CP1500PFCRM2U rack UPS"
+```
+
+```
+# upsd.conf — localhost only, nothing remote monitors it yet
+LISTEN 127.0.0.1 3493
+```
+
+```
+# upsd.users
+[monmaster]
+	password = <redacted>
+	upsmon primary
+```
+
+```
+# upsmon.conf (trimmed)
+MINSUPPLIES 1
+SHUTDOWNCMD "/sbin/shutdown -h +0"
+POLLFREQ 5
+POLLFREQALERT 5
+HOSTSYNC 15
+DEADTIME 15
+POWERDOWNFLAG "/etc/killpower"
+
+MONITOR rack-ups@localhost 1 monmaster <redacted> primary
+```
+
+Verifying it's alive:
+
+```
+$ upsc rack-ups
+ups.status: OL
+battery.charge: 100
+battery.runtime: 2250
+ups.load: 20
+```
+
 ## Why a standalone holdover instead of waiting for the Pi
 
 - Long-term plan: a dedicated Pi running the NUT master, watching the UPS over USB. If the UPS's USB cable
@@ -63,8 +128,14 @@ over USB and trigger a clean shutdown before the battery runs out.
   the NUT package (and its udev rule) were installed. udev only fires rules on a device event — plug in,
   unplug, or an explicit re-trigger — not retroactively on hardware that's already sitting there with old
   permissions. Fixed with a single command to manually re-fire udev against the already-connected device, no
-  physical unplug or reboot needed. General udev behavior, not NUT-specific — worth checking any time a
-  freshly installed package's udev rule doesn't seem to be taking effect on already-plugged-in hardware.
+  physical unplug or reboot needed:
+
+  ```
+  udevadm trigger --attr-match=idVendor=0764
+  ```
+
+  General udev behavior, not NUT-specific — worth checking any time a freshly installed package's udev rule
+  doesn't seem to be taking effect on already-plugged-in hardware.
 
 ## Where it stands
 

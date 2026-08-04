@@ -21,10 +21,58 @@ port forwards at all, not just for Minecraft and web.
 ## What was done
 
 - Deployed [Velocity](https://velocitypowered.com/) (the Minecraft proxy) on the Front End as a Docker
-  container (`itzg/mc-proxy`), tunneling back to all 7 backend Minecraft servers over Tailscale.
+  container (`itzg/mc-proxy`), tunneling back to all 7 backend Minecraft servers over Tailscale:
+
+  ```yaml
+  services:
+    velocity:
+      image: itzg/mc-proxy
+      container_name: velocity
+      restart: unless-stopped
+      environment:
+        TYPE: VELOCITY
+        VELOCITY_VERSION: "3.4.0"
+      ports:
+        - "25565:25565"
+      volumes:
+        - ./config:/config:ro
+        - ./plugins:/plugins
+        - ./server-data:/server
+  ```
+
+  The relevant bits of `velocity.toml` (backend Tailscale IPs replaced with placeholders):
+
+  ```toml
+  bind = "0.0.0.0:25565"
+
+  [servers]
+  lobby    = "<tailnet-ip>:25565"
+  lab      = "<tailnet-ip>:25566"
+  war      = "<tailnet-ip>:25567"
+  creative = "<tailnet-ip>:25568"
+  kat      = "<tailnet-ip>:25569"
+  lil      = "<tailnet-ip>:25570"
+  ams      = "<tailnet-ip>:25571"
+  try = ["lobby"]
+
+  [forced-hosts]
+  "mc.lilium-mg.net" = ["lobby"]
+  ```
+
 - Migrated `mc.lilium-mg.net` DNS to the Front End's IP and removed the home router's old forward for it.
 - Extended the same idea to Plex: a small raw TCP passthrough container on the Front End, tunneling to Plex
-  over Tailscale instead of a router forward.
+  over Tailscale instead of a router forward:
+
+  ```yaml
+  services:
+    plex-proxy:
+      image: alpine/socat
+      container_name: plex-proxy
+      restart: unless-stopped
+      command: TCP-LISTEN:32400,fork,reuseaddr TCP:<plex-tailnet-ip>:32400
+      ports:
+        - "32400:32400"
+  ```
 - Disabled UPnP entirely at the router. Home now has **zero** WAN→LAN port forwards.
 
 ## Why a raw TCP forward for Plex instead of a reverse proxy
@@ -45,7 +93,13 @@ port forwards at all, not just for Minecraft and web.
   port no matter how many times the config file got edited and the container restarted. Root cause: the image
   only syncs the mounted config into its working copy if that file doesn't already exist yet. The very first
   sync (with the old port still in it) had been silently sticking around ever since. Fixed by deleting the
-  stale working copy so it re-synced from the real config.
+  stale working copy so it re-synced from the real config:
+
+  ```
+  rm ./server-data/velocity.toml
+  docker restart velocity
+  ```
+
 - **Version pinning bit twice.** Left unpinned, it resolved to a nightly snapshot build instead of a real
   release. First attempt to pin a specific version made it worse — that version turned out to not actually
   exist yet as a real release, only as an unpublished dev build. Confirmed the real current stable version
@@ -54,7 +108,14 @@ port forwards at all, not just for Minecraft and web.
 - **Container stayed "unhealthy" even after the proxy was working correctly** — a real client could already
   connect through it. The healthcheck script parses the bind address by naive string-splitting and choked on a
   bind value that had no port on it at one point (Velocity itself tolerates that and just defaults quietly).
-  Fixed by making the bind address explicit.
+  Confirmed what the script was actually seeing with:
+
+  ```
+  docker inspect --format='{{json .State.Health}}' velocity
+  ```
+
+  which returned `invalid value "0.0.0.0" for flag -port: parse error` — fixed by making the bind address
+  explicit (`bind = "0.0.0.0:25565"`) instead of the bare `"0.0.0.0"` it had briefly been set to.
 - **A working proxy still couldn't reach one specific backend server**, reachable fine on all the others.
   Assumed a firewall problem — wasn't. That one backend server had its bind address explicitly locked to
   loopback-only, a totally reasonable setting from when the proxy used to run on the very same machine, which
@@ -68,8 +129,14 @@ port forwards at all, not just for Minecraft and web.
   removed.** Plex has its own automatic UPnP port-mapping feature, completely independent of whatever's
   configured in the router's own admin panel — closing the manual forward didn't stop it from quietly opening
   a new one on its own. No UI toggle for this in the version installed, so the fix went through Plex's own API
-  directly instead. Confirmed it was actually gone (not just reconfigured) by disabling UPnP at the router
-  entirely and testing a direct connection: clean refusal, not just a timeout.
+  directly instead:
+
+  ```
+  curl -X PUT "http://<plex-host>:32400/:/prefs?ManualPortMappingMode=1&X-Plex-Token=<token>"
+  ```
+
+  Confirmed it was actually gone (not just reconfigured) by disabling UPnP at the router entirely and testing
+  a direct connection: clean refusal, not just a timeout.
 
 ## Bedrock support, fixed
 

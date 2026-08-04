@@ -44,6 +44,22 @@ A snapshot of the homelab as it stands today: hardware, layout, and what's runni
 - Trade-off: more RAM/disk overhead than running everything on one host, in exchange for a smaller blast
   radius per failure and independent rebuild/restore per VM.
 
+Regardless of what a given VM actually runs, its Docker stack follows the same shape: one `docker-compose.yml`
+deployed as a Portainer-managed stack, secrets kept in a git-ignored `.env` next to it rather than inlined:
+
+```yaml
+services:
+  app:
+    image: someorg/some-service:2.3
+    container_name: some-service
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+```
+
 ## Networking and access
 
 - Two Nginx Proxy Manager instances handle reverse proxying and TLS termination, one per domain (a

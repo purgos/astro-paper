@@ -22,16 +22,61 @@ still-pending migration covered in part 2.
 - Bought a small VPS (2 vCPU, 2 GB RAM, 90 GB SSD, static public IP) to act as the public-facing edge.
   Calling it the **Front End**.
 - Installed [Tailscale](https://tailscale.com/) on the VPS and joined it to my existing tailnet, instead of
-  setting up a separate WireGuard tunnel.
+  setting up a separate WireGuard tunnel:
+
+  ```
+  tailscale up --ssh=false --advertise-tags=tag:edge
+  ```
+
 - Hardened SSH on the VPS: key-only auth, bound to the Tailscale interface only, not reachable on the public
-  interface at all.
+  interface at all:
+
+  ```
+  # /etc/ssh/sshd_config.d/tailscale-only.conf
+  ListenAddress 100.x.x.x        # Tailscale interface only, not the public one
+  PasswordAuthentication no
+  PermitRootLogin no
+  PubkeyAuthentication yes
+  ```
+
 - Installed Tailscale directly on the two home services the Front End needs to reach (the Minecraft host and
   the internal reverse-proxy host), rather than relying on my home network's existing Tailscale subnet
   router. Each got its own tag.
 - Wrote a Tailscale ACL policy scoping the Front End down to only the specific ports on those two tagged
-  hosts that it actually needs — nothing else on the home network is reachable from it, by default.
+  hosts that it actually needs — nothing else on the home network is reachable from it, by default:
+
+  ```json
+  {
+    "tagOwners": {
+      "tag:edge": ["autogroup:admin"],
+      "tag:minecraft": ["autogroup:admin"],
+      "tag:infra": ["autogroup:admin"]
+    },
+    "acls": [
+      { "action": "accept", "src": ["tag:edge"], "dst": ["tag:minecraft:25565-25571"] },
+      { "action": "accept", "src": ["tag:edge"], "dst": ["tag:infra:80,443"] },
+      { "action": "accept", "src": ["autogroup:admin"], "dst": ["tag:edge:22,81"] }
+    ]
+  }
+  ```
+
 - Deployed [Nginx Proxy Manager](https://nginxproxymanager.com/) on the Front End as the new public
-  TLS-terminating edge.
+  TLS-terminating edge, admin UI bound to the Tailscale IP only:
+
+  ```yaml
+  services:
+    npm:
+      image: jc21/nginx-proxy-manager:latest
+      container_name: npm-front-end
+      restart: unless-stopped
+      ports:
+        - "80:80"
+        - "443:443"
+        - "100.x.x.x:81:81"   # admin UI: Tailscale interface only
+      volumes:
+        - ./data:/data
+        - ./letsencrypt:/etc/letsencrypt
+  ```
 - Chained the Front End's NPM to the existing NPM instance at home: the Front End terminates public TLS and
   forwards plain HTTP to the home instance over the Tailscale tunnel (already encrypted, so no need to
   double-terminate TLS). The home instance keeps doing all its existing per-hostname routing unchanged.
