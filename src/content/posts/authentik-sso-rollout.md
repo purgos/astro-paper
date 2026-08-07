@@ -1,7 +1,7 @@
 ---
 author: Purgos
 pubDatetime: 2026-08-05T23:00:00.000Z
-modDatetime: 2026-08-05T23:00:00.000Z
+modDatetime: 2026-08-07T14:45:00.000Z
 title: "Standing Up My Own Identity Provider, Twice: Authentik SSO Across Two Domains"
 slug: authentik-sso-rollout
 featured: true
@@ -161,6 +161,71 @@ cut is real single sign-on, not single-sign-on-shaped friction.
   SSO was still disabled the last time the container started, flipping the setting afterward didn't matter to
   the already-running process. A restart fixed it immediately.
 
+## The invite link that never actually worked
+
+Went back to actually test invite-gated signup on the community domain and it failed immediately: clicking
+the generated invite link threw "Request has been denied. Flow does not apply to current user," before any
+signup form even rendered. Turned out the social-login enrollment flow has a policy that only allows entry
+as a continuation of an in-progress OAuth callback — it was never meant to be a link destination on its own,
+which the flow's own diagram view made obvious once I actually looked:
+
+```
+{"event": "Flow not applicable to current user", "exc": "FlowNonApplicableException()"}
+```
+
+Tried routing around it with a reverse-proxy redirect into the normal login page instead, which got past that
+error and into a worse one: a fast, repeating loop between the OAuth provider's callback and Authentik's own
+login endpoint, session state seemingly not surviving the round trip. Confirmed the session cookie itself was
+being set correctly, so it wasn't a simple config mistake — never got this one fully root-caused, and stopped
+chasing it.
+
+## Building a native signup flow instead
+
+Rather than keep debugging someone else's OAuth session handling, built a plain username/password enrollment
+flow that skips the whole social-login round trip: a form collects username, name, email, and password,
+checks the invite token, creates the account, sends a real verification email, and only activates the account
+once that link gets clicked.
+
+Two bugs surfaced building it, both from the same mistake — reusing existing pieces instead of building fresh
+ones:
+
+- **Reusing the built-in profile-editing form fields for name/email broke every single submission.** Every
+  attempt failed with two raw Python exceptions rendered straight into the error banner:
+  ```
+  'flow_plan'
+  'AnonymousUser' object has no attribute 'group_attributes'
+  ```
+  Neither error showed up in any of the obvious places to look. Turned out the *stage* those fields lived on
+  had a separate, easy-to-miss "validation policies" list — not the usual place policies get attached, and
+  not visible from anywhere related to the fields themselves — that had somehow accumulated over a dozen
+  unrelated policies, several of which assume a real logged-in user already exists. They crash instantly
+  against a brand-new anonymous signup. Cleared the list, built the two fields fresh instead of reusing the
+  shared ones, and every submission went through clean.
+- **Reusing an existing account-creation stage created every new signup with a restricted account type** that
+  Authentik itself blocks from its own basic user dashboard without a paid license tier — not a bug, just the
+  wrong default carried over from a different flow it wasn't built for. A dedicated account-creation stage
+  with the correct type fixed it immediately.
+
+## The SMTP dead end
+
+Verification emails need to actually send, which meant fixing SMTP first. A brand-new mailbox set up
+specifically for this got rejected on every single authentication attempt:
+
+```
+smtplib.SMTPAuthenticationError: (535, b'5.7.8 Username and Password not accepted...')
+```
+
+Ruled out everything on the credential side first — regenerated the app password twice, confirmed two-factor
+was actually on, confirmed it was a real account and not an alias, tested the raw SMTP handshake directly
+with Python instead of trusting the app's own error message. Same rejection every time. The actual cause
+turned out to be one level up: the mail provider's admin console had no app-password control exposed for that
+account's org unit at all — not disabled, just entirely absent, which looks identical to a wrong password
+from the client side no matter how many times you regenerate one.
+
+Gave up on the new mailbox and pointed it at an existing one already sending mail successfully for other
+services instead. Same connection code, immediate success. Sometimes the fix for "this one specific account
+won't authenticate" isn't fixing that account at all.
+
 ## Where it stands
 
 Both identity provider instances are live. Ten apps across two domains are wired up with real single
@@ -170,6 +235,11 @@ Facebook as social login sources on the community-facing side. One public dashbo
 *out* of scope after actually thinking through what gating it would do — it's the front door for people who
 don't have an account yet, so putting a login wall in front of it would defeat its entire purpose.
 
-The most useful thing to come out of the debugging isn't any single fix — it's the `email_verified` scope
-mapping override. That bug will hit the next app I wire up too, and now the fix is one property mapping away
-instead of a fresh investigation.
+New-user signup on the community domain now goes through the native email/password flow end to end: register,
+get a real verification email, click through, land logged in. The social login sources still work fine for
+people already using them — they're just not the invite path anymore.
+
+The most useful thing to come out of all this debugging isn't any single fix — it's the `email_verified`
+scope mapping override from the original rollout, and the habit it reinforced twice more this round: when
+something reused from elsewhere breaks in a way that doesn't make sense, check what assumptions the original
+context baked in before assuming the new context is the one that's broken.
